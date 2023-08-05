@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"regexp"
@@ -156,8 +158,6 @@ func parseReviewBatch(json_raw []byte) ReviewBatch {
 }
 
 func getFirstBatch(critic *Critic) (*ReviewBatch, error) {
-	fmt.Println("Get first batch...")
-
 	regexp, err := regexp.Compile("<script id=\"reviews-json\" .+>(.+)</script>")
 	if err != nil {
 		return nil, err
@@ -179,6 +179,11 @@ func getFirstBatch(critic *Critic) (*ReviewBatch, error) {
 	body := string(raw_body)
 
 	match := regexp.FindStringSubmatch(body)
+	if len(match) < 2 {
+		return &ReviewBatch{
+			reviews: []Review{},
+		}, nil
+	}
 
 	json_raw := []byte(match[1])
 
@@ -238,12 +243,121 @@ func fetch_reviews(critic *Critic, verbose bool) ([]Review, error) {
 	return reviews, nil
 }
 
+func fetch_worker(channel chan<- bool, critics []Critic, outDir string) {
+	for _, critic := range critics {
+		fileName := fmt.Sprintf("%s/%s.csv", outDir, critic.url)
+		outFile, err := os.Create(fileName)
+		if err != nil {
+			fmt.Println("Couldn't create file")
+			fmt.Println(err)
+			channel <- false
+			continue
+		}
+
+		reviews, err := fetch_reviews(&critic, false)
+		if err != nil {
+			channel <- false
+			continue
+		}
+
+		for _, review := range reviews {
+			_, err := outFile.WriteString(fmt.Sprintf("%s\n", review.String()))
+			if err != nil {
+				continue
+			}
+		}
+
+		channel <- true
+	}
+}
+
+func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
+	// Still some issues with this one, but good enough
+	err := os.MkdirAll(outDir, os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+
+	inFile, err := os.Open(criticsFile)
+	if err != nil {
+		panic(err)
+	}
+	defer inFile.Close()
+
+	scanner := bufio.NewScanner(inFile)
+
+	var critics []Critic
+	var skippedLines = 0
+
+	if verbose {
+		fmt.Println("Scanning critics file...")
+	}
+	for scanner.Scan() {
+		criticsLine := strings.Split(scanner.Text(), ",")
+
+		if len(criticsLine) < 2 {
+			skippedLines += 1
+			continue
+		}
+
+		critics = append(critics, Critic{
+			name: strings.TrimSpace(criticsLine[0]),
+			url:  strings.TrimSpace(criticsLine[1]),
+		})
+	}
+
+	if verbose {
+		fmt.Printf("Found %d critics\n", len(critics))
+		fmt.Printf("Skipped %d lines\n", skippedLines)
+	}
+
+	// set up workers
+	channel := make(chan bool, 1)
+
+	stepSize := int(math.Ceil(float64(len(critics)) / float64(workers)))
+
+	for i := 0; i < workers; i++ {
+		lower := i * stepSize
+		upper := min(len(critics), lower+stepSize)
+
+		go fetch_worker(channel, critics[lower:upper], outDir)
+	}
+
+	doneTotal := 0
+	finished := 0
+	errors := 0
+
+	for i := 0; i < len(critics); i++ {
+		res := <-channel
+		doneTotal += 1
+		if res {
+			finished += 1
+		} else {
+			errors += 1
+		}
+
+		if verbose && doneTotal&10 == 0 {
+			fmt.Printf("\r%.2f%% done; %d finished; %d errors",
+				100.0*float32(doneTotal)/float32(len(critics)),
+				finished,
+				errors)
+		}
+	}
+
+	close(channel)
+}
+
 func main() {
 	fetchCriticsSet := flag.NewFlagSet("fetch-critics", flag.ExitOnError)
 	var outFile = fetchCriticsSet.String("o", "./tmp/out.txt", "Path to the out-file")
 
 	fetchReviewsSet := flag.NewFlagSet("fetch-reviews", flag.ExitOnError)
 	var criticUrl = fetchReviewsSet.String("c", "", "URL of critic to get reviews from")
+
+	fetchAllReviewsSet := flag.NewFlagSet("fetch-all-reviews", flag.ExitOnError)
+	var criticsFile = fetchAllReviewsSet.String("i", "./tmp/critics.csv", "Path to critics file (CSV)")
+	var outDir = fetchAllReviewsSet.String("o", "./tmp/reviews", "Path to output directory (will be created if doesn't exist)")
+	var workers = fetchAllReviewsSet.Int("w", 1, "Number of workers to fetch all reviews")
 
 	if len(os.Args) < 2 {
 		fmt.Println("Expect arguments")
@@ -265,6 +379,9 @@ func main() {
 		for _, rev := range reviews[:min(len(reviews), 10)] {
 			fmt.Println(rev.String())
 		}
+	case "fetch-all-reviews":
+		fetchAllReviewsSet.Parse(os.Args[2:])
+		fetch_all_reviews(*criticsFile, *outDir, *workers, true)
 	default:
 		fmt.Printf("Unkown command \"%s\"\n", os.Args[1])
 		os.Exit(1)
