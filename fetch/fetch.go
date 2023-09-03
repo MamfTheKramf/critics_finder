@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net/http"
 	"os"
 	"regexp"
@@ -31,6 +32,7 @@ func (c Critic) String() string {
 	return fmt.Sprintf("%s, %s", c.name, c.url)
 }
 
+// Fetches a list of all available critics and places them in the given outFile
 func fetch_critics(outFile string) {
 	fmt.Println("Fetching critics...")
 
@@ -133,6 +135,13 @@ type rawResp struct {
 	Reviews  []rawReview
 }
 
+type genericError struct {
+	Message string
+}
+
+func (err *genericError) Error() string { return err.Message }
+
+// / converts a review JSON into a ReviewBatch instance
 func parseReviewBatch(json_raw []byte) ReviewBatch {
 	res := rawResp{}
 	json.Unmarshal(json_raw, &res)
@@ -157,21 +166,72 @@ func parseReviewBatch(json_raw []byte) ReviewBatch {
 	return batch
 }
 
-func getFirstBatch(critic *Critic) (*ReviewBatch, error) {
-	regexp, err := regexp.Compile("<script id=\"reviews-json\" .+>(.+)</script>")
+var USER_AGENTS = [15]string{
+	"Mozilla/5.0 (Linux; Android 12; moto g stylus 5G)",
+	"AppleWebKit/537.36 (KHTML, like Gecko)",
+	"Chrome/112.0.0.0 Mobile Safari/537.36v",
+	"Mozilla/5.0 (Linux; Android 10; MAR-LX1A)",
+	"AppleWebKit/537.36 (KHTML, like Gecko)",
+	"Chrome/112.0.0.0 Mobile Safari/537.36",
+	"Mozilla/5.0 (iPhone9,4; U; CPU iPhone OS 10_0_1 like Mac OS X)",
+	"AppleWebKit/602.1.50 (KHTML, like Gecko)",
+	"Version/10.0 Mobile/14A403 Safari/602.1",
+	"Mozilla/5.0 (Linux; Android 7.0; Pixel C Build/NRD90M; wv)",
+	"AppleWebKit/537.36 (KHTML, like Gecko)",
+	"Version/4.0 Chrome/52.0.2743.98 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+	"AppleWebKit/537.36 (KHTML, like Gecko)",
+	"Chrome/42.0.2311.135 Safari/537.36 Edge/12.246",
+}
+
+func sendRequest(url string) ([]byte, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	const url = "https://www.rottentomatoes.com/critics/%s/movies"
+	idx := rand.Int31n(15)
+	userAgent := USER_AGENTS[idx]
 
-	resp, err := http.Get(fmt.Sprintf(url, critic.url))
+	// add some user agent because without some spam filters kick in
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	raw_body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != 200 {
+		// fmt.Println("FUCK!")
+		// body := string(raw_body)
+		// fmt.Println(body)
+		return nil, &genericError{"Got bad status code!"}
+	}
+
+	return raw_body, nil
+}
+
+// Fetch the first batch of reviews of a critic
+func getFirstBatch(critic *Critic) (*ReviewBatch, error) {
+
+	// The first "movies" page of a critic has the reviews as a json hardcoded somewhere in the HTML.
+	// THis line is what we're interested in.
+	regexp, err := regexp.Compile("<script id=\"reviews-json\" .+?>({.+)</script>")
+	if err != nil {
+		return nil, err
+	}
+
+	const url = "https://www.rottentomatoes.com/critics/%s/movies"
+	reqUrl := fmt.Sprintf(url, critic.url)
+	raw_body, err := sendRequest(reqUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -192,16 +252,13 @@ func getFirstBatch(critic *Critic) (*ReviewBatch, error) {
 	return &batch, nil
 }
 
+// Get the ReviewBatch of the given critic after the provided afterCursor.
+// afterCursor is used by RottenTomates for the pagination
 func getBatch(critic *Critic, afterCursor string) (*ReviewBatch, error) {
 	const url = "https://www.rottentomatoes.com/napi/critics/%s/movies?after=%s&pagecount=50"
+	reqUrl := fmt.Sprintf(url, critic.url, afterCursor)
 
-	resp, err := http.Get(fmt.Sprintf(url, critic.url, afterCursor))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	raw_body, err := io.ReadAll(resp.Body)
+	raw_body, err := sendRequest(reqUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -210,8 +267,13 @@ func getBatch(critic *Critic, afterCursor string) (*ReviewBatch, error) {
 	return &batch, nil
 }
 
+// Fetch all the reviews of a given critic
 func fetch_reviews(critic *Critic, verbose bool) ([]Review, error) {
 	var reviews []Review
+
+	if verbose {
+		fmt.Print("\rLoad Review page 1...")
+	}
 	batch, err := getFirstBatch(critic)
 	if err != nil {
 		return nil, err
@@ -243,34 +305,54 @@ func fetch_reviews(critic *Critic, verbose bool) ([]Review, error) {
 	return reviews, nil
 }
 
-func fetch_worker(channel chan<- bool, critics []Critic, outDir string) {
+// Worker that getch a slice of critics, fetches all their reviews and writes them into the outDir.
+// Each time a critic is done, a bool is sent to the channel indicating success of failure for the critic
+func fetch_worker(channel chan<- bool, critics []Critic, outDir string, failChan chan<- []Critic) {
+	var failedCrititcs []Critic
 	for _, critic := range critics {
-		fileName := fmt.Sprintf("%s/%s.csv", outDir, critic.url)
-		outFile, err := os.Create(fileName)
-		if err != nil {
-			fmt.Println("Couldn't create file")
-			fmt.Println(err)
-			channel <- false
-			continue
-		}
 
 		reviews, err := fetch_reviews(&critic, false)
 		if err != nil {
 			channel <- false
+			failedCrititcs = append(failedCrititcs, critic)
+			continue
+		}
+		if len(reviews) == 0 {
+			channel <- false
+			failedCrititcs = append(failedCrititcs, critic)
 			continue
 		}
 
+		fileName := fmt.Sprintf("%s/%s.csv", outDir, critic.url)
+		outFile, err := os.Create(fileName)
+		if err != nil {
+			channel <- false
+			failedCrititcs = append(failedCrititcs, critic)
+			continue
+		}
+
+		writtenLines := 0
 		for _, review := range reviews {
 			_, err := outFile.WriteString(fmt.Sprintf("%s\n", review.String()))
 			if err != nil {
+				fmt.Println(err)
 				continue
 			}
+			writtenLines++
 		}
 
-		channel <- true
+		if writtenLines == 0 {
+			failedCrititcs = append(failedCrititcs, critic)
+			channel <- false
+		} else {
+			channel <- true
+		}
 	}
+
+	failChan <- failedCrititcs
 }
 
+// Fetch the reviews of all the critivs in the criticsFile and write for each of the critics a file into outDir.
 func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 	// Still some issues with this one, but good enough
 	err := os.MkdirAll(outDir, os.ModePerm)
@@ -313,6 +395,9 @@ func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 
 	// set up workers
 	channel := make(chan bool, 1)
+	defer close(channel)
+	failChannel := make(chan []Critic, workers)
+	defer close(failChannel)
 
 	stepSize := int(math.Ceil(float64(len(critics)) / float64(workers)))
 
@@ -320,20 +405,20 @@ func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 		lower := i * stepSize
 		upper := min(len(critics), lower+stepSize)
 
-		go fetch_worker(channel, critics[lower:upper], outDir)
+		go fetch_worker(channel, critics[lower:upper], outDir, failChannel)
 	}
 
 	doneTotal := 0
 	finished := 0
 	errors := 0
 
-	for i := 0; i < len(critics); i++ {
+	for doneTotal < len(critics) {
 		res := <-channel
-		doneTotal += 1
+		doneTotal++
 		if res {
-			finished += 1
+			finished++
 		} else {
-			errors += 1
+			errors++
 		}
 
 		if verbose && doneTotal&10 == 0 {
@@ -343,8 +428,21 @@ func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 				errors)
 		}
 	}
+	if verbose {
+		fmt.Printf("\r%.2f%% done; %d finished; %d errors",
+			100.0*float32(doneTotal)/float32(len(critics)),
+			finished,
+			errors)
+	}
 
-	close(channel)
+	fmt.Println("Critics where issues occured")
+	for i := 0; i < workers; i++ {
+		failed := <-failChannel
+
+		for _, failedCritic := range failed {
+			fmt.Println(failedCritic.url)
+		}
+	}
 }
 
 func main() {
@@ -384,6 +482,7 @@ func main() {
 		fetch_all_reviews(*criticsFile, *outDir, *workers, true)
 	default:
 		fmt.Printf("Unkown command \"%s\"\n", os.Args[1])
+		fmt.Println("Available commands are: fetch-critics, fetch-reviews, fetch-all-reviews")
 		os.Exit(1)
 	}
 }
