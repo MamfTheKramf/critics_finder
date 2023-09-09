@@ -12,12 +12,12 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"strings"
 
 	"github.com/critics_finder/utils"
 )
 
 type Critic = utils.Critic
+type Review = utils.Review
 
 // Fetches a list of all available critics and places them in the given outFile
 func fetch_critics(outFile string) {
@@ -60,40 +60,7 @@ func fetch_critics(outFile string) {
 	fmt.Printf("\rFound %d critics.\n", len(critics))
 
 	// write them to a file
-
-	fo, err := os.Create(outFile)
-	if err != nil {
-		fmt.Println(critics)
-		panic(err)
-	}
-
-	for idx, c := range critics {
-		if idx%10 == 0 {
-			fmt.Printf("\rWriting to file: %.2f%%", float32(idx)/float32(len(critics)))
-		}
-
-		_, err := fo.WriteString(fmt.Sprintf("%s\n", c.String()))
-		if err != nil {
-			fmt.Printf("\rCouldn't write %s\n", c.String())
-			continue
-		}
-	}
-	fmt.Println("\r Writing to file: 100%")
-}
-
-type Review struct {
-	score      string
-	mediaTitle string
-	mediaInfo  string
-	mediaUrl   string
-}
-
-func (r Review) String() string {
-	return fmt.Sprintf("%s;%s;%s;%s",
-		strings.ReplaceAll(r.score, ";", "\\;"),
-		strings.ReplaceAll(r.mediaTitle, ";", "\\;"),
-		strings.ReplaceAll(r.mediaInfo, ";", "\\;"),
-		strings.ReplaceAll(r.mediaUrl, ";", "\\;"))
+	utils.WriteCritics(critics, outFile)
 }
 
 type ReviewBatch struct {
@@ -136,10 +103,10 @@ func parseReviewBatch(json_raw []byte) ReviewBatch {
 
 	for _, rev := range res.Reviews {
 		reviews = append(reviews, Review{
-			score:      rev.OriginalScore,
-			mediaTitle: rev.MediaTitle,
-			mediaInfo:  rev.MediaInfo,
-			mediaUrl:   rev.MediaUrl,
+			Score:      rev.OriginalScore,
+			MediaTitle: rev.MediaTitle,
+			MediaInfo:  rev.MediaInfo,
+			MediaUrl:   rev.MediaUrl,
 		})
 	}
 
@@ -408,13 +375,13 @@ const (
 
 func FetchMain(args []string) {
 	fetchCriticsSet := flag.NewFlagSet(FETCH_CRITICS, flag.ExitOnError)
-	var outFile = fetchCriticsSet.String("o", "./tmp/critics.csv", "Path to the out-file")
+	var outFile = fetchCriticsSet.String("o", "./tmp/critics.gob", "Path to the out-file")
 
 	fetchReviewsSet := flag.NewFlagSet(FETCH_REVIEWS, flag.ExitOnError)
 	var criticUrl = fetchReviewsSet.String("c", "", "URL of critic to get reviews from")
 
 	fetchAllReviewsSet := flag.NewFlagSet(FETCH_ALL_REVIEWS, flag.ExitOnError)
-	var criticsFile = fetchAllReviewsSet.String("i", "./tmp/critics.csv", "Path to critics file (CSV)")
+	var criticsFile = fetchAllReviewsSet.String("i", "./tmp/critics.gob", "Path to critics file (CSV)")
 	var outDir = fetchAllReviewsSet.String("o", "./tmp/reviews", "Path to output directory (will be created if doesn't exist)")
 	var workers = fetchAllReviewsSet.Int("w", 1, "Number of workers to fetch all reviews")
 

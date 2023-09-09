@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/critics_finder/fetch"
+	"github.com/critics_finder/normalize"
 )
 
 func main() {
@@ -15,6 +16,7 @@ func main() {
 
 	argMap := make(map[string]func([]string))
 	argMap["fetch"] = fetch.FetchMain
+	argMap["normalize"] = normalize.NormalizeMain
 
 	fn, prs := argMap[os.Args[1]]
 	if !prs {

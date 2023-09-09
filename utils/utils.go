@@ -1,8 +1,9 @@
 package utils
 
 import (
-	"bufio"
+	"encoding/gob"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -23,6 +24,30 @@ func (c Critic) String() string {
 	return fmt.Sprintf("%s, %s", c.Name, c.Url)
 }
 
+func WriteCritics(critics []Critic, outFile string) {
+	fo, err := os.Create(outFile)
+	if err != nil {
+		fmt.Println(critics)
+		panic(err)
+	}
+	defer fo.Close()
+
+	enc := gob.NewEncoder(fo)
+
+	for idx, c := range critics {
+		if idx%10 == 0 {
+			fmt.Printf("\rWriting to file: %.2f%%", float32(idx)/float32(len(critics)))
+		}
+
+		err := enc.Encode(c)
+		if err != nil {
+			fmt.Printf("\rCouldn't write %s\n", c.String())
+			continue
+		}
+	}
+	fmt.Println("\r Writing to file: 100%")
+}
+
 // Reads all the critics from a given file
 func ReadCritics(criticsFile string, verbose bool) []Critic {
 	inFile, err := os.Open(criticsFile)
@@ -31,7 +56,7 @@ func ReadCritics(criticsFile string, verbose bool) []Critic {
 	}
 	defer inFile.Close()
 
-	scanner := bufio.NewScanner(inFile)
+	dec := gob.NewDecoder(inFile)
 
 	var critics []Critic
 	var skippedLines = 0
@@ -39,18 +64,19 @@ func ReadCritics(criticsFile string, verbose bool) []Critic {
 	if verbose {
 		fmt.Println("Scanning critics file...")
 	}
-	for scanner.Scan() {
-		criticsLine := strings.Split(scanner.Text(), ",")
-
-		if len(criticsLine) < 2 {
-			skippedLines += 1
+	for {
+		var c Critic
+		err := dec.Decode(&c)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			skippedLines++
 			continue
 		}
 
-		critics = append(critics, Critic{
-			Name: strings.TrimSpace(criticsLine[0]),
-			Url:  strings.TrimSpace(criticsLine[1]),
-		})
+		critics = append(critics, c)
 	}
 
 	if verbose {
@@ -59,4 +85,19 @@ func ReadCritics(criticsFile string, verbose bool) []Critic {
 	}
 
 	return critics
+}
+
+type Review struct {
+	Score      string
+	MediaTitle string
+	MediaInfo  string
+	MediaUrl   string
+}
+
+func (r Review) String() string {
+	return fmt.Sprintf("%s;%s;%s;%s",
+		strings.ReplaceAll(r.Score, ";", "\\;"),
+		strings.ReplaceAll(r.MediaTitle, ";", "\\;"),
+		strings.ReplaceAll(r.MediaInfo, ";", "\\;"),
+		strings.ReplaceAll(r.MediaUrl, ";", "\\;"))
 }
