@@ -1,9 +1,8 @@
 // Fetches all the data about the critics and the movies they rated and stores them in a database
 
-package main
+package fetch
 
 import (
-	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,28 +13,15 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/critics_finder/utils"
 )
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-type Critic struct {
-	name string
-	url  string
-}
-
-func (c Critic) String() string {
-	return fmt.Sprintf("%s, %s", c.name, c.url)
-}
+type Critic = utils.Critic
 
 // Fetches a list of all available critics and places them in the given outFile
 func fetch_critics(outFile string) {
 	fmt.Println("Fetching critics...")
-
 	const alphabet = "abcdefghijklmnopqrstuvwxyz"
 	const url = "https://www.rottentomatoes.com/critics/authors?letter=%s"
 
@@ -67,7 +53,7 @@ func fetch_critics(outFile string) {
 		matches := regExp.FindAllStringSubmatch(body, -1)
 
 		for _, match := range matches {
-			critics = append(critics, Critic{name: match[2], url: match[1]})
+			critics = append(critics, Critic{Name: match[2], Url: match[1]})
 		}
 	}
 
@@ -230,7 +216,7 @@ func getFirstBatch(critic *Critic) (*ReviewBatch, error) {
 	}
 
 	const url = "https://www.rottentomatoes.com/critics/%s/movies"
-	reqUrl := fmt.Sprintf(url, critic.url)
+	reqUrl := fmt.Sprintf(url, critic.Url)
 	raw_body, err := sendRequest(reqUrl)
 	if err != nil {
 		return nil, err
@@ -256,7 +242,7 @@ func getFirstBatch(critic *Critic) (*ReviewBatch, error) {
 // afterCursor is used by RottenTomates for the pagination
 func getBatch(critic *Critic, afterCursor string) (*ReviewBatch, error) {
 	const url = "https://www.rottentomatoes.com/napi/critics/%s/movies?after=%s&pagecount=50"
-	reqUrl := fmt.Sprintf(url, critic.url, afterCursor)
+	reqUrl := fmt.Sprintf(url, critic.Url, afterCursor)
 
 	raw_body, err := sendRequest(reqUrl)
 	if err != nil {
@@ -323,7 +309,7 @@ func fetch_worker(channel chan<- bool, critics []Critic, outDir string, failChan
 			continue
 		}
 
-		fileName := fmt.Sprintf("%s/%s.csv", outDir, critic.url)
+		fileName := fmt.Sprintf("%s/%s.csv", outDir, critic.Url)
 		outFile, err := os.Create(fileName)
 		if err != nil {
 			channel <- false
@@ -360,38 +346,7 @@ func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 		panic(err)
 	}
 
-	inFile, err := os.Open(criticsFile)
-	if err != nil {
-		panic(err)
-	}
-	defer inFile.Close()
-
-	scanner := bufio.NewScanner(inFile)
-
-	var critics []Critic
-	var skippedLines = 0
-
-	if verbose {
-		fmt.Println("Scanning critics file...")
-	}
-	for scanner.Scan() {
-		criticsLine := strings.Split(scanner.Text(), ",")
-
-		if len(criticsLine) < 2 {
-			skippedLines += 1
-			continue
-		}
-
-		critics = append(critics, Critic{
-			name: strings.TrimSpace(criticsLine[0]),
-			url:  strings.TrimSpace(criticsLine[1]),
-		})
-	}
-
-	if verbose {
-		fmt.Printf("Found %d critics\n", len(critics))
-		fmt.Printf("Skipped %d lines\n", skippedLines)
-	}
+	critics := utils.ReadCritics(criticsFile, verbose)
 
 	// set up workers
 	channel := make(chan bool, 1)
@@ -403,7 +358,7 @@ func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 
 	for i := 0; i < workers; i++ {
 		lower := i * stepSize
-		upper := min(len(critics), lower+stepSize)
+		upper := utils.Min(len(critics), lower+stepSize)
 
 		go fetch_worker(channel, critics[lower:upper], outDir, failChannel)
 	}
@@ -440,49 +395,55 @@ func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 		failed := <-failChannel
 
 		for _, failedCritic := range failed {
-			fmt.Println(failedCritic.url)
+			fmt.Println(failedCritic.Url)
 		}
 	}
 }
 
-func main() {
-	fetchCriticsSet := flag.NewFlagSet("fetch-critics", flag.ExitOnError)
-	var outFile = fetchCriticsSet.String("o", "./tmp/out.txt", "Path to the out-file")
+const (
+	FETCH_CRITICS     = "critics"
+	FETCH_REVIEWS     = "reviews"
+	FETCH_ALL_REVIEWS = "all-reviews"
+)
 
-	fetchReviewsSet := flag.NewFlagSet("fetch-reviews", flag.ExitOnError)
+func FetchMain(args []string) {
+	fetchCriticsSet := flag.NewFlagSet(FETCH_CRITICS, flag.ExitOnError)
+	var outFile = fetchCriticsSet.String("o", "./tmp/critics.csv", "Path to the out-file")
+
+	fetchReviewsSet := flag.NewFlagSet(FETCH_REVIEWS, flag.ExitOnError)
 	var criticUrl = fetchReviewsSet.String("c", "", "URL of critic to get reviews from")
 
-	fetchAllReviewsSet := flag.NewFlagSet("fetch-all-reviews", flag.ExitOnError)
+	fetchAllReviewsSet := flag.NewFlagSet(FETCH_ALL_REVIEWS, flag.ExitOnError)
 	var criticsFile = fetchAllReviewsSet.String("i", "./tmp/critics.csv", "Path to critics file (CSV)")
 	var outDir = fetchAllReviewsSet.String("o", "./tmp/reviews", "Path to output directory (will be created if doesn't exist)")
 	var workers = fetchAllReviewsSet.Int("w", 1, "Number of workers to fetch all reviews")
 
-	if len(os.Args) < 2 {
-		fmt.Println("Expect arguments")
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Expect arguments")
 		os.Exit(1)
 	}
 
-	switch os.Args[1] {
-	case "fetch-critics":
-		fetchCriticsSet.Parse(os.Args[2:])
+	switch args[0] {
+	case FETCH_CRITICS:
+		fetchCriticsSet.Parse(args[1:])
 		fetch_critics(*outFile)
-	case "fetch-reviews":
-		fetchReviewsSet.Parse(os.Args[2:])
-		reviews, err := fetch_reviews(&Critic{name: "", url: *criticUrl}, true)
+	case FETCH_REVIEWS:
+		fetchReviewsSet.Parse(args[1:])
+		reviews, err := fetch_reviews(&Critic{Name: "", Url: *criticUrl}, true)
 		if err != nil {
 			panic(err)
 		}
 
 		fmt.Printf("Found %d reviews\n", len(reviews))
-		for _, rev := range reviews[:min(len(reviews), 10)] {
+		for _, rev := range reviews[:utils.Min(len(reviews), 10)] {
 			fmt.Println(rev.String())
 		}
-	case "fetch-all-reviews":
-		fetchAllReviewsSet.Parse(os.Args[2:])
+	case FETCH_ALL_REVIEWS:
+		fetchAllReviewsSet.Parse(args[1:])
 		fetch_all_reviews(*criticsFile, *outDir, *workers, true)
 	default:
-		fmt.Printf("Unkown command \"%s\"\n", os.Args[1])
-		fmt.Println("Available commands are: fetch-critics, fetch-reviews, fetch-all-reviews")
+		fmt.Printf("Unkown command \"%s\"\n", args[0])
+		fmt.Printf("Available commands are: %s, %s, %s\n", FETCH_CRITICS, FETCH_REVIEWS, FETCH_ALL_REVIEWS)
 		os.Exit(1)
 	}
 }
