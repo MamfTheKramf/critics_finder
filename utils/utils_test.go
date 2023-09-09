@@ -32,9 +32,9 @@ func TestSerDe(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	WriteCritics(expectedCriritcs, f.Name())
+	WriteStructs(expectedCriritcs, f.Name(), false)
 
-	critics := ReadCritics(f.Name(), true)
+	critics := ReadStructs[Critic](f.Name(), false)
 
 	if len(critics) != len(expectedCriritcs) {
 		t.Fatalf("Expected %d critics. Got %d", len(expectedCriritcs), len(critics))

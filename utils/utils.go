@@ -24,33 +24,41 @@ func (c Critic) String() string {
 	return fmt.Sprintf("%s, %s", c.Name, c.Url)
 }
 
-func WriteCritics(critics []Critic, outFile string) {
+func WriteStructs[T fmt.Stringer](structs []T, outFile string, verbose bool) int {
 	fo, err := os.Create(outFile)
 	if err != nil {
-		fmt.Println(critics)
 		panic(err)
 	}
 	defer fo.Close()
 
 	enc := gob.NewEncoder(fo)
 
-	for idx, c := range critics {
-		if idx%10 == 0 {
-			fmt.Printf("\rWriting to file: %.2f%%", float32(idx)/float32(len(critics)))
+	writtenStructs := 0
+	for idx, s := range structs {
+		if verbose && idx%10 == 0 {
+			fmt.Printf("\rWriting to file: %.2f%%", float32(idx)/float32(len(structs)))
 		}
 
-		err := enc.Encode(c)
+		err := enc.Encode(s)
 		if err != nil {
-			fmt.Printf("\rCouldn't write %s\n", c.String())
+			if verbose {
+				fmt.Printf("\rCouldn't write struct %s\n", s.String())
+			}
 			continue
 		}
+
+		writtenStructs++
 	}
-	fmt.Println("\r Writing to file: 100%")
+	if verbose {
+		fmt.Println("\r Writing to file: 100%")
+	}
+
+	return writtenStructs
 }
 
 // Reads all the critics from a given file
-func ReadCritics(criticsFile string, verbose bool) []Critic {
-	inFile, err := os.Open(criticsFile)
+func ReadStructs[T any](filePath string, verbose bool) []T {
+	inFile, err := os.Open(filePath)
 	if err != nil {
 		panic(err)
 	}
@@ -58,33 +66,33 @@ func ReadCritics(criticsFile string, verbose bool) []Critic {
 
 	dec := gob.NewDecoder(inFile)
 
-	var critics []Critic
-	var skippedLines = 0
+	var structs []T
+	var skippedStructs = 0
 
 	if verbose {
-		fmt.Println("Scanning critics file...")
+		fmt.Println("Scanning structs file...")
 	}
 	for {
-		var c Critic
-		err := dec.Decode(&c)
+		var s T
+		err := dec.Decode(&s)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
-			skippedLines++
+			skippedStructs++
 			continue
 		}
 
-		critics = append(critics, c)
+		structs = append(structs, s)
 	}
 
 	if verbose {
-		fmt.Printf("Found %d critics\n", len(critics))
-		fmt.Printf("Skipped %d lines\n", skippedLines)
+		fmt.Printf("Found %d structs\n", len(structs))
+		fmt.Printf("Skipped %d structs\n", skippedStructs)
 	}
 
-	return critics
+	return structs
 }
 
 type Review struct {

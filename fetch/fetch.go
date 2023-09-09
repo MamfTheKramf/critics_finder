@@ -26,7 +26,7 @@ func fetch_critics(outFile string) {
 	const url = "https://www.rottentomatoes.com/critics/authors?letter=%s"
 
 	// collect them
-	var critics []Critic
+	var critics []fmt.Stringer
 
 	regExp, err := regexp.Compile("<a class=\"critic-authors__name\" href=\"/critics/(.+)\" data-qa=\"critic-item-link\">(.+)</a>")
 	if err != nil {
@@ -60,11 +60,11 @@ func fetch_critics(outFile string) {
 	fmt.Printf("\rFound %d critics.\n", len(critics))
 
 	// write them to a file
-	utils.WriteCritics(critics, outFile)
+	utils.WriteStructs(critics, outFile, false)
 }
 
 type ReviewBatch struct {
-	reviews []Review
+	reviews []*Review
 	next    string
 	prev    string
 }
@@ -88,21 +88,15 @@ type rawResp struct {
 	Reviews  []rawReview
 }
 
-type genericError struct {
-	Message string
-}
-
-func (err *genericError) Error() string { return err.Message }
-
 // / converts a review JSON into a ReviewBatch instance
 func parseReviewBatch(json_raw []byte) ReviewBatch {
 	res := rawResp{}
 	json.Unmarshal(json_raw, &res)
 
-	var reviews []Review
+	var reviews []*Review
 
 	for _, rev := range res.Reviews {
-		reviews = append(reviews, Review{
+		reviews = append(reviews, &Review{
 			Score:      rev.OriginalScore,
 			MediaTitle: rev.MediaTitle,
 			MediaInfo:  rev.MediaInfo,
@@ -166,7 +160,7 @@ func sendRequest(url string) ([]byte, error) {
 		// fmt.Println("FUCK!")
 		// body := string(raw_body)
 		// fmt.Println(body)
-		return nil, &genericError{"Got bad status code!"}
+		return nil, fmt.Errorf("got bad status code %d", resp.StatusCode)
 	}
 
 	return raw_body, nil
@@ -194,7 +188,7 @@ func getFirstBatch(critic *Critic) (*ReviewBatch, error) {
 	match := regexp.FindStringSubmatch(body)
 	if len(match) < 2 {
 		return &ReviewBatch{
-			reviews: []Review{},
+			reviews: []*Review{},
 		}, nil
 	}
 
@@ -221,8 +215,8 @@ func getBatch(critic *Critic, afterCursor string) (*ReviewBatch, error) {
 }
 
 // Fetch all the reviews of a given critic
-func fetch_reviews(critic *Critic, verbose bool) ([]Review, error) {
-	var reviews []Review
+func fetch_reviews(critic *Critic, verbose bool) ([]*Review, error) {
+	var reviews []*Review
 
 	if verbose {
 		fmt.Print("\rLoad Review page 1...")
@@ -276,7 +270,7 @@ func fetch_worker(channel chan<- bool, critics []Critic, outDir string, failChan
 			continue
 		}
 
-		fileName := fmt.Sprintf("%s/%s.csv", outDir, critic.Url)
+		fileName := fmt.Sprintf("%s/%s.gob", outDir, critic.Url)
 		outFile, err := os.Create(fileName)
 		if err != nil {
 			channel <- false
@@ -284,17 +278,9 @@ func fetch_worker(channel chan<- bool, critics []Critic, outDir string, failChan
 			continue
 		}
 
-		writtenLines := 0
-		for _, review := range reviews {
-			_, err := outFile.WriteString(fmt.Sprintf("%s\n", review.String()))
-			if err != nil {
-				fmt.Println(err)
-				continue
-			}
-			writtenLines++
-		}
+		writtenStructs := utils.WriteStructs(reviews, outFile.Name(), false)
 
-		if writtenLines == 0 {
+		if writtenStructs == 0 {
 			failedCrititcs = append(failedCrititcs, critic)
 			channel <- false
 		} else {
@@ -313,7 +299,7 @@ func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 		panic(err)
 	}
 
-	critics := utils.ReadCritics(criticsFile, verbose)
+	critics := utils.ReadStructs[Critic](criticsFile, verbose)
 
 	// set up workers
 	channel := make(chan bool, 1)
@@ -344,14 +330,14 @@ func fetch_all_reviews(criticsFile, outDir string, workers int, verbose bool) {
 		}
 
 		if verbose && doneTotal&10 == 0 {
-			fmt.Printf("\r%.2f%% done; %d finished; %d errors",
+			fmt.Printf("%.2f%% done; %d finished; %d errors\r",
 				100.0*float32(doneTotal)/float32(len(critics)),
 				finished,
 				errors)
 		}
 	}
 	if verbose {
-		fmt.Printf("\r%.2f%% done; %d finished; %d errors",
+		fmt.Printf("%.2f%% done; %d finished; %d errors\r",
 			100.0*float32(doneTotal)/float32(len(critics)),
 			finished,
 			errors)
