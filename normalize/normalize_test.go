@@ -63,3 +63,30 @@ func TestNormalizeGrade(t *testing.T) {
 	}
 
 }
+
+func TestStarsRatings(t *testing.T) {
+	ratings := []string{
+		"4 stars of 5",
+		"2 stars",
+		"10 stars out of 12",
+	}
+	expectedVals := []float32{
+		4. / 5.,
+		2. / 5.,
+		10. / 12.,
+	}
+
+	eps := 0.000001
+
+	for idx, rating := range ratings {
+		expected := expectedVals[idx]
+		actual, err := normalizeRating(rating)
+		if err != nil {
+			t.Errorf("%v", err)
+		}
+		if math.Abs(float64(expected-actual)) > eps {
+			t.Errorf("Expected %f for rating '%s'. Got %f", expected, rating, actual)
+		}
+	}
+
+}

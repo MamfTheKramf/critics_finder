@@ -4,15 +4,20 @@ package normalize
 import (
 	"flag"
 	"fmt"
+	"math"
 	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/critics_finder/utils"
 )
 
 var (
-	fractionRegexp = regexp.MustCompile(`(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)`)
-	gradesMap      = map[string]float32{
+	singleNumRegExp = regexp.MustCompile(`^\d+(?:\.\d+)?$`)
+	fractionRegexp  = regexp.MustCompile(`(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)`)
+	gradesMap       = map[string]float32{
 		"A+": 1.0,
 		"+A": 1.0,
 		"A":  0.9285714285714285,
@@ -41,10 +46,39 @@ var (
 	}
 )
 
+func preprocessRating(rating string) string {
+	inter := strings.ToUpper(rating)
+	inter = strings.ReplaceAll(inter, "STARS", "")
+	inter = strings.ReplaceAll(inter, "STAR", "")
+	inter = strings.ReplaceAll(inter, "OUT OF", "/")
+	inter = strings.ReplaceAll(inter, "OF", "/")
+	inter = strings.ReplaceAll(inter, "\\", "/")
+	inter = strings.ReplaceAll(inter, "-MINUS", "-")
+	inter = strings.ReplaceAll(inter, "-PLUS", "+")
+	inter = strings.ReplaceAll(inter, " ", "")
+	return inter
+}
+
 // Normalizes the given rating. Rating can either be in fraction form (e.g. 4.5/10) or in school grades (e.g. B+)
 func normalizeRating(rating string) (float32, error) {
-	trimmed := strings.ReplaceAll(rating, " ", "")
-	match := fractionRegexp.FindStringSubmatch(trimmed)
+	processed := preprocessRating(rating)
+	match := singleNumRegExp.FindStringSubmatch(processed)
+	if match != nil {
+		num, numErr := strconv.ParseFloat(match[0], 32)
+		if numErr == nil {
+			denom := 5.0
+			if num >= 5.0 {
+				if num <= 10. {
+					denom = 10.0
+				} else if num <= 100. {
+					denom = 100.0
+				}
+			}
+
+			return float32(num / denom), nil
+		}
+	}
+	match = fractionRegexp.FindStringSubmatch(processed)
 	if match != nil {
 		num, numErr := strconv.ParseFloat(match[1], 32)
 		denom, denomErr := strconv.ParseFloat(match[2], 32)
@@ -53,12 +87,50 @@ func normalizeRating(rating string) (float32, error) {
 		}
 	}
 	// wasn't a rating check for grade
-	uppercase := strings.ToUpper(trimmed)
-	score, prs := gradesMap[uppercase]
+	score, prs := gradesMap[processed]
 	if !prs {
 		return 0.0, fmt.Errorf("couldn't normalize rating '%s'", rating)
 	}
 	return score, nil
+}
+
+func normalizeReviews(reviewFile, outDir string) (int, error) {
+	errors := strings.Builder{}
+	emptyScores := 0
+
+	reviews := utils.ReadStructs[utils.Review](reviewFile, false)
+	for _, review := range reviews {
+		if review.Score == "" {
+			emptyScores++
+			continue
+		}
+		_, err := normalizeRating(review.Score)
+		if err != nil {
+			errors.WriteString(err.Error())
+			errors.WriteString("\n")
+		}
+	}
+
+	if errors.Len() > 0 {
+		return emptyScores, fmt.Errorf(errors.String())
+	}
+	return emptyScores, nil
+}
+
+// normalizes each review inside each of the review files and writes them to a new file in outDir
+func normalizeWorker(channel chan<- bool, reviewFiles []os.DirEntry, inDir, outDir string, emptyScoresChannel chan<- int) {
+	totalEmptyScores := 0
+	for _, reviewFile := range reviewFiles {
+		path := path.Join(inDir, reviewFile.Name())
+		emptyScores, err := normalizeReviews(path, outDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v", err)
+		}
+		channel <- err == nil
+		totalEmptyScores += emptyScores
+	}
+
+	emptyScoresChannel <- totalEmptyScores
 }
 
 func NormalizeMain(args []string) {
@@ -73,43 +145,55 @@ func NormalizeMain(args []string) {
 	flag.Parse()
 
 	fmt.Println(*inDir, *outDir, *moviesFile, *workers)
-	// fetchCriticsSet := flag.NewFlagSet(FETCH_CRITICS, flag.ExitOnError)
-	// var outFile = fetchCriticsSet.String("o", "./tmp/critics.csv", "Path to the out-file")
 
-	// fetchReviewsSet := flag.NewFlagSet(FETCH_REVIEWS, flag.ExitOnError)
-	// var criticUrl = fetchReviewsSet.String("c", "", "URL of critic to get reviews from")
+	entries, err := os.ReadDir(*inDir)
+	if err != nil {
+		panic(err)
+	}
 
-	// fetchAllReviewsSet := flag.NewFlagSet(FETCH_ALL_REVIEWS, flag.ExitOnError)
-	// var criticsFile = fetchAllReviewsSet.String("i", "./tmp/critics.csv", "Path to critics file (CSV)")
-	// var outDir = fetchAllReviewsSet.String("o", "./tmp/reviews", "Path to output directory (will be created if doesn't exist)")
-	// var workers = fetchAllReviewsSet.Int("w", 1, "Number of workers to fetch all reviews")
+	progressChannel := make(chan bool, 1)
+	defer close(progressChannel)
+	emptyScoresChannel := make(chan int, *workers)
+	defer close(emptyScoresChannel)
 
-	// if len(args) < 1 {
-	// 	fmt.Fprintf(os.Stderr, "Expect arguments")
-	// 	os.Exit(1)
-	// }
+	stepSize := int(math.Ceil(float64(len(entries)) / float64(*workers)))
 
-	// switch args[0] {
-	// case FETCH_CRITICS:
-	// 	fetchCriticsSet.Parse(args[1:])
-	// 	fetch_critics(*outFile)
-	// case FETCH_REVIEWS:
-	// 	fetchReviewsSet.Parse(args[1:])
-	// 	reviews, err := fetch_reviews(&Critic{Name: "", Url: *criticUrl}, true)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
+	for i := 0; i < *workers; i++ {
+		lower := i * stepSize
+		upper := utils.Min(len(entries), lower+stepSize)
 
-	// 	fmt.Printf("Found %d reviews\n", len(reviews))
-	// 	for _, rev := range reviews[:utils.Min(len(reviews), 10)] {
-	// 		fmt.Println(rev.String())
-	// 	}
-	// case FETCH_ALL_REVIEWS:
-	// 	fetchAllReviewsSet.Parse(args[1:])
-	// 	fetch_all_reviews(*criticsFile, *outDir, *workers, true)
-	// default:
-	// 	fmt.Printf("Unkown command \"%s\"\n", args[0])
-	// 	fmt.Printf("Available commands are: %s, %s, %s\n", FETCH_CRITICS, FETCH_REVIEWS, FETCH_ALL_REVIEWS)
-	// 	os.Exit(1)
-	// }
+		go normalizeWorker(progressChannel, entries[lower:upper], *inDir, *outDir, emptyScoresChannel)
+	}
+
+	doneTotal := 0
+	finished := 0
+	errors := 0
+
+	for doneTotal < len(entries) {
+		res := <-progressChannel
+		doneTotal++
+		if res {
+			finished++
+		} else {
+			errors++
+		}
+
+		if doneTotal&10 == 0 {
+			fmt.Printf("%.2f%% done; %d finished; %d errors\r",
+				100.0*float32(doneTotal)/float32(len(entries)),
+				finished,
+				errors)
+		}
+	}
+	fmt.Printf("%.2f%% done; %d finished; %d errors\n",
+		100.0*float32(doneTotal)/float32(len(entries)),
+		finished,
+		errors)
+
+	totalEmptyScores := 0
+	for i := 0; i < *workers; i++ {
+		totalEmptyScores += <-emptyScoresChannel
+	}
+
+	fmt.Printf("totalEmptyScores: %d\n", totalEmptyScores)
 }

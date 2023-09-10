@@ -109,3 +109,31 @@ func (r Review) String() string {
 		strings.ReplaceAll(r.MediaInfo, ";", "\\;"),
 		strings.ReplaceAll(r.MediaUrl, ";", "\\;"))
 }
+
+type NumericReview struct {
+	Score      float32
+	MediaTitle string
+	MediaInfo  string
+	MediaUrl   string
+}
+
+func (r NumericReview) String() string {
+	return fmt.Sprintf("%f;%s;%s;%s",
+		r.Score,
+		strings.ReplaceAll(r.MediaTitle, ";", "\\;"),
+		strings.ReplaceAll(r.MediaInfo, ";", "\\;"),
+		strings.ReplaceAll(r.MediaUrl, ";", "\\;"))
+}
+
+type Media struct {
+	MediaTitle string
+	MediaInfo  string
+	MediaUrl   string
+}
+
+func (m Media) String() string {
+	return fmt.Sprintf("%s;%s;%s",
+		strings.ReplaceAll(m.MediaTitle, ";", "\\;"),
+		strings.ReplaceAll(m.MediaInfo, ";", "\\;"),
+		strings.ReplaceAll(m.MediaUrl, ";", "\\;"))
+}
