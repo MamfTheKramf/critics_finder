@@ -111,17 +111,13 @@ func (r Review) String() string {
 }
 
 type NumericReview struct {
-	Score      float32
-	MediaTitle string
-	MediaInfo  string
-	MediaUrl   string
+	Score    float32
+	MediaUrl string
 }
 
 func (r NumericReview) String() string {
-	return fmt.Sprintf("%f;%s;%s;%s",
+	return fmt.Sprintf("%f;%s",
 		r.Score,
-		strings.ReplaceAll(r.MediaTitle, ";", "\\;"),
-		strings.ReplaceAll(r.MediaInfo, ";", "\\;"),
 		strings.ReplaceAll(r.MediaUrl, ";", "\\;"))
 }
 

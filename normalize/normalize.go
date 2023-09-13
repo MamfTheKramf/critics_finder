@@ -94,9 +94,21 @@ func normalizeRating(rating string) (float32, error) {
 	return score, nil
 }
 
-func normalizeReviews(reviewFile, outDir string) (int, error) {
+type WorkerResult struct {
+	media       []utils.Media
+	normalized  int
+	emptyScores int
+	errorScores int
+}
+
+func normalizeReviews(reviewFile, outDir string) (WorkerResult, error) {
 	errors := strings.Builder{}
 	emptyScores := 0
+	errorScores := 0
+	normalized := 0
+	var media []utils.Media
+
+	var normalizedReviews []utils.NumericReview
 
 	reviews := utils.ReadStructs[utils.Review](reviewFile, false)
 	for _, review := range reviews {
@@ -104,33 +116,60 @@ func normalizeReviews(reviewFile, outDir string) (int, error) {
 			emptyScores++
 			continue
 		}
-		_, err := normalizeRating(review.Score)
+		normalizedScore, err := normalizeRating(review.Score)
 		if err != nil {
 			errors.WriteString(err.Error())
 			errors.WriteString("\n")
+			errorScores++
+			continue
 		}
+
+		normalized++
+		normalizedReviews = append(normalizedReviews, utils.NumericReview{
+			Score:    normalizedScore,
+			MediaUrl: review.MediaUrl,
+		})
+		media = append(media, utils.Media{
+			MediaTitle: review.MediaTitle,
+			MediaInfo:  review.MediaInfo,
+			MediaUrl:   review.MediaUrl,
+		})
 	}
 
-	if errors.Len() > 0 {
-		return emptyScores, fmt.Errorf(errors.String())
+	fileName := path.Join(outDir, path.Base(reviewFile))
+	utils.WriteStructs[utils.NumericReview](normalizedReviews, fileName, false)
+
+	if errorScores > 0 {
+		return WorkerResult{}, fmt.Errorf(errors.String())
 	}
-	return emptyScores, nil
+	return WorkerResult{
+		media:       media,
+		emptyScores: emptyScores,
+		errorScores: errorScores,
+		normalized:  normalized,
+	}, nil
 }
 
 // normalizes each review inside each of the review files and writes them to a new file in outDir
-func normalizeWorker(channel chan<- bool, reviewFiles []os.DirEntry, inDir, outDir string, emptyScoresChannel chan<- int) {
-	totalEmptyScores := 0
+func normalizeWorker(channel chan<- bool, reviewFiles []os.DirEntry, inDir, outDir string, resultsChannel chan<- WorkerResult) {
+	workerResult := WorkerResult{
+		media: []utils.Media{},
+	}
 	for _, reviewFile := range reviewFiles {
 		path := path.Join(inDir, reviewFile.Name())
-		emptyScores, err := normalizeReviews(path, outDir)
+		funcResult, err := normalizeReviews(path, outDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v", err)
 		}
 		channel <- err == nil
-		totalEmptyScores += emptyScores
+
+		workerResult.emptyScores += funcResult.emptyScores
+		workerResult.errorScores += funcResult.errorScores
+		workerResult.normalized += funcResult.normalized
+		workerResult.media = append(workerResult.media, funcResult.media...)
 	}
 
-	emptyScoresChannel <- totalEmptyScores
+	resultsChannel <- workerResult
 }
 
 func NormalizeMain(args []string) {
@@ -138,10 +177,7 @@ func NormalizeMain(args []string) {
 	var outDir = flag.String("o", "./tmp/normalized", "Path to the directory to write normalized reviews to")
 	var moviesFile = flag.String("m", "./tmp/movies.gob", "Path to file to store movies in")
 	var workers = flag.Int("w", 1, "Number of workers to normalize reviews")
-	fmt.Println(os.Args)
-	fmt.Println(args)
 	os.Args = append(os.Args[:1], args...)
-	fmt.Println(os.Args)
 	flag.Parse()
 
 	fmt.Println(*inDir, *outDir, *moviesFile, *workers)
@@ -151,10 +187,15 @@ func NormalizeMain(args []string) {
 		panic(err)
 	}
 
+	err = os.MkdirAll(*outDir, os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+
 	progressChannel := make(chan bool, 1)
 	defer close(progressChannel)
-	emptyScoresChannel := make(chan int, *workers)
-	defer close(emptyScoresChannel)
+	resultsChannel := make(chan WorkerResult, *workers)
+	defer close(resultsChannel)
 
 	stepSize := int(math.Ceil(float64(len(entries)) / float64(*workers)))
 
@@ -162,7 +203,7 @@ func NormalizeMain(args []string) {
 		lower := i * stepSize
 		upper := utils.Min(len(entries), lower+stepSize)
 
-		go normalizeWorker(progressChannel, entries[lower:upper], *inDir, *outDir, emptyScoresChannel)
+		go normalizeWorker(progressChannel, entries[lower:upper], *inDir, *outDir, resultsChannel)
 	}
 
 	doneTotal := 0
@@ -190,10 +231,36 @@ func NormalizeMain(args []string) {
 		finished,
 		errors)
 
-	totalEmptyScores := 0
+	totalResult := WorkerResult{
+		media: []utils.Media{},
+	}
 	for i := 0; i < *workers; i++ {
-		totalEmptyScores += <-emptyScoresChannel
+		result := <-resultsChannel
+		totalResult.emptyScores += result.emptyScores
+		totalResult.errorScores += result.errorScores
+		totalResult.normalized += result.normalized
+		totalResult.media = append(totalResult.media, result.media...)
 	}
 
-	fmt.Printf("totalEmptyScores: %d\n", totalEmptyScores)
+	fmt.Printf("normalized: %d\n", totalResult.normalized)
+	fmt.Printf("totalEmptyScores: %d\n", totalResult.emptyScores)
+	fmt.Printf("totalErrorScores: %d\n", totalResult.errorScores)
+	fmt.Printf("non-dedupped media len: %d\n", len(totalResult.media))
+
+	fmt.Println("\nDeduping media...")
+
+	mediaMap := make(map[string]utils.Media)
+	for _, media := range totalResult.media {
+		mediaMap[media.MediaUrl] = media
+	}
+
+	fmt.Printf("dedupped media len: %d\n", len(mediaMap))
+
+	deduppedMedia := []utils.Media{}
+	for _, v := range mediaMap {
+		deduppedMedia = append(deduppedMedia, v)
+	}
+
+	fmt.Println("\nWrite media struct...")
+	utils.WriteStructs[utils.Media](deduppedMedia, *moviesFile, false)
 }
