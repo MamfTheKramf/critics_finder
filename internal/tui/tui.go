@@ -7,6 +7,7 @@ import (
 
 var app = tview.NewApplication()
 var content = tview.NewFlex()
+var mainSections = tview.NewFlex()
 var ratedMediaSection = tview.NewBox()
 var selectMediaSection = tview.NewBox()
 var controls = tview.NewTextView()
@@ -31,8 +32,10 @@ func setup() {
 	selectMediaSection.SetTitle("Select Media To Rate")
 	selectMediaSection.SetTitleAlign(tview.AlignLeft)
 
+	mainSections.AddItem(ratedMediaSection, 0, 1, false)
+	mainSections.AddItem(selectMediaSection, 0, 1, false)
+
 	content.SetDirection(tview.FlexRow)
-	content.AddItem(ratedMediaSection, 0, 1, false)
-	content.AddItem(selectMediaSection, 0, 1, false)
+	content.AddItem(mainSections, 0, 1, true)
 	content.AddItem(controls, 1, 0, false)
 }
