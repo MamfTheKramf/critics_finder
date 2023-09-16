@@ -173,9 +173,9 @@ func normalizeWorker(channel chan<- bool, reviewFiles []os.DirEntry, inDir, outD
 }
 
 func NormalizeMain(args []string) {
-	var inDir = flag.String("i", "./tmp/reviews", "Path to the directory containing the reviews")
-	var outDir = flag.String("o", "./tmp/normalized", "Path to the directory to write normalized reviews to")
-	var moviesFile = flag.String("m", "./tmp/movies.gob", "Path to file to store movies in")
+	var inDir = flag.String("i", utils.DefaultReviewsDir, "Path to the directory containing the reviews")
+	var outDir = flag.String("o", utils.DefaultNormalizedDir, "Path to the directory to write normalized reviews to")
+	var moviesFile = flag.String("m", utils.DefaultMediaFile, "Path to file to store movies in")
 	var workers = flag.Int("w", 1, "Number of workers to normalize reviews")
 	os.Args = append(os.Args[:1], args...)
 	flag.Parse()

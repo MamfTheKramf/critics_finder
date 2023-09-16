@@ -361,14 +361,14 @@ const (
 
 func FetchMain(args []string) {
 	fetchCriticsSet := flag.NewFlagSet(FETCH_CRITICS, flag.ExitOnError)
-	var outFile = fetchCriticsSet.String("o", "./tmp/critics.gob", "Path to the out-file")
+	var outFile = fetchCriticsSet.String("o", utils.DefaultCriticsFile, "Path to the out-file")
 
 	fetchReviewsSet := flag.NewFlagSet(FETCH_REVIEWS, flag.ExitOnError)
 	var criticUrl = fetchReviewsSet.String("c", "", "URL of critic to get reviews from")
 
 	fetchAllReviewsSet := flag.NewFlagSet(FETCH_ALL_REVIEWS, flag.ExitOnError)
-	var criticsFile = fetchAllReviewsSet.String("i", "./tmp/critics.gob", "Path to critics file (CSV)")
-	var outDir = fetchAllReviewsSet.String("o", "./tmp/reviews", "Path to output directory (will be created if doesn't exist)")
+	var criticsFile = fetchAllReviewsSet.String("i", utils.DefaultCriticsFile, "Path to critics file (CSV)")
+	var outDir = fetchAllReviewsSet.String("o", utils.DefaultReviewsDir, "Path to output directory (will be created if doesn't exist)")
 	var workers = fetchAllReviewsSet.Int("w", 1, "Number of workers to fetch all reviews")
 
 	if len(args) < 1 {

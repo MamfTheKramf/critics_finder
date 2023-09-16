@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+const (
+	DefaultCriticsFile     = "./tmp/critics.gob"
+	DefaultReviewsDir      = "./tmp/reviews"
+	DefaultNormalizedDir   = "./tmp/normalized"
+	DefaultMediaFile       = "./tmp/movies.gob"
+	DefaultUserRatingsFile = "./tmp/userRatings.gob"
+)
+
 func Min(a, b int) int {
 	if a < b {
 		return a
