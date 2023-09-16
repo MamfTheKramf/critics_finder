@@ -4,6 +4,8 @@ go 1.20
 
 require github.com/rivo/tview v0.0.0-20230916092115-0ad06c2ea3dd
 
+require github.com/sahilm/fuzzy v0.1.0 // indirect
+
 require (
 	github.com/gdamore/encoding v1.0.0 // indirect
 	github.com/gdamore/tcell/v2 v2.6.0
