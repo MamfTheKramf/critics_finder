@@ -13,7 +13,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/critics_finder/utils"
+	"github.com/MamfTheKramf/critics_finder/internal/utils"
 )
 
 type Critic = utils.Critic

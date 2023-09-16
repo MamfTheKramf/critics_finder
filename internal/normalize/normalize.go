@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/critics_finder/utils"
+	"github.com/MamfTheKramf/critics_finder/internal/utils"
 )
 
 var (

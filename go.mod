@@ -1,3 +1,3 @@
-module github.com/critics_finder
+module github.com/MamfTheKramf/critics_finder
 
 go 1.20

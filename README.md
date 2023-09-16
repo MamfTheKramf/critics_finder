@@ -2,6 +2,13 @@
 
 Find critics on (Rotten Tomatoes)[https://www.rottentomatoes.com/] that have the same taste as you.
 
+## Build
+
+To build the project, run the following command:
+```Bash
+go build -o bin/ ./cmd/main.go
+```
+
 ## Usage
 
 ### Fetching the data
@@ -12,8 +19,8 @@ Use the `fetch` module for fetching the data.
 
 Run the following commands (run subcommands with `-h` flag to see help information):
 ```Bash
-go run . fetch critics
-go run . fetch all-reviews -w 32
+bin/critics_finder fetch critics
+bin/critics_finder fetch all-reviews -w 32
 ```
 
 **Note:** Especially the second command will take some time.
@@ -24,7 +31,7 @@ For debugging the subcommand `fetch reviews` is available to fetch the reviews o
 
 Because there is no standard rating system on Rotten Tomatoes and everyone does what they want, the ratings need to be normalized. To do this, run
 ```Bash
-go run . normalize
+bin/critics_finder normalize
 ```
 
 #### Common rating schemes

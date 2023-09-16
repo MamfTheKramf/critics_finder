@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/critics_finder/fetch"
-	"github.com/critics_finder/normalize"
+	"github.com/MamfTheKramf/critics_finder/internal/fetch"
+	"github.com/MamfTheKramf/critics_finder/internal/normalize"
 )
 
 func main() {
