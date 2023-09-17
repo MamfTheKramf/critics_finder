@@ -30,6 +30,7 @@ var content = tview.NewFlex()
 var mainSections = tview.NewFlex()
 var ratedMediaSection = tview.NewFlex()
 var selectMediaSection = tview.NewFlex()
+var selectedSection = selectMediaSection // reference to selection that is currently selected
 var searchQuery = tview.NewInputField()
 var controls = tview.NewTextView()
 
@@ -110,8 +111,20 @@ func setupApp() {
 	selectMediaSection.AddItem(inputLabel, 1, 0, false)
 	selectMediaSection.AddItem(searchQuery, 0, 1, true)
 
-	mainSections.AddItem(ratedMediaSection, 0, 1, false)
+	mainSections.AddItem(ratedMediaSection, 0, 1, true)
 	mainSections.AddItem(selectMediaSection, 0, 1, false)
+	mainSections.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Modifiers()&tcell.ModShift != 0 {
+			if event.Key() == tcell.KeyLeft {
+				selectedSection = ratedMediaSection
+			}
+			if event.Key() == tcell.KeyRight {
+				selectedSection = selectMediaSection
+			}
+			app.SetFocus(selectedSection)
+		}
+		return event
+	})
 
 	content.SetDirection(tview.FlexRow)
 	content.AddItem(mainSections, 0, 1, true)
@@ -196,13 +209,13 @@ func showContent() {
 	ratedMediaSection.Clear()
 	li := tview.NewList()
 	for _, userRating := range userRatings {
-		li.AddItem(userRating.MediaUrl, fmt.Sprintf("%f", userRating.Score), ' ', nil)
+		li.AddItem(userRating.MediaUrl, fmt.Sprintf("    Score: %.2f", userRating.Score), ' ', nil)
 	}
 
 	ratedMediaSection.AddItem(li, 0, 1, true)
 
 	layers.SwitchToPage(contentLabel)
-	app.SetFocus(selectMediaSection)
+	app.SetFocus(selectedSection)
 }
 
 // add new user rating or update existing one
