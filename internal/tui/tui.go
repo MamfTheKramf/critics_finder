@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/MamfTheKramf/critics_finder/internal/utils"
@@ -13,10 +14,21 @@ import (
 	"github.com/sahilm/fuzzy"
 )
 
+const contentLabel = "content"
+const modalLabel = "model"
+
 var app = tview.NewApplication()
+
+// To be able to display rating modal
+var layers = tview.NewPages()
+
+var ratingModal = tview.NewFlex()
+var modalPrompt = tview.NewTextView()
+var modalForm = tview.NewForm()
+
 var content = tview.NewFlex()
 var mainSections = tview.NewFlex()
-var ratedMediaSection = tview.NewBox()
+var ratedMediaSection = tview.NewFlex()
 var selectMediaSection = tview.NewFlex()
 var searchQuery = tview.NewInputField()
 var controls = tview.NewTextView()
@@ -28,11 +40,20 @@ var criticsRatings = make(map[string][]utils.NumericReview)
 // critic ratings are read in a separate routing -> we need an indicator that we're done before comparing
 var doneReadingcriticsRatings = false
 var media []utils.Media
+var selected utils.Media
+var currRating = 0.0
 
 // list of media names used for fuzzy finding
 var mediaNames []string
 
+var outFile *os.File
+
 func StartTui(args []string) {
+	file, err := os.Create("./tmp/deineMudda.txt")
+	if err != nil {
+		panic(err)
+	}
+	outFile = file
 	userRatingsFile := flag.String("u", utils.DefaultUserRatingsFile, "Path to the user ratings file (if non-existing it will be created)")
 	criticsFile := flag.String("c", utils.DefaultCriticsFile, "Path to crtics file")
 	inDir := flag.String("i", utils.DefaultNormalizedDir, "Path to directory containing normalized reviews")
@@ -42,7 +63,7 @@ func StartTui(args []string) {
 
 	setup(*userRatingsFile, *criticsFile, *inDir, *mediaFile)
 
-	if err := app.SetRoot(content, true).EnableMouse(true).SetFocus(searchQuery).Run(); err != nil {
+	if err := app.SetRoot(layers, true).EnableMouse(true).SetFocus(searchQuery).Run(); err != nil {
 		panic(err)
 	}
 }
@@ -57,6 +78,16 @@ func setup(userRatingsFile, criticsFile, criticsRatingDir, mediaFile string) {
 	setupApp()
 }
 
+func modal(p tview.Primitive, width, height int) tview.Primitive {
+	return tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(p, height, 1, true).
+			AddItem(nil, 0, 1, false), width, 1, true).
+		AddItem(nil, 0, 1, false)
+}
+
 func setupApp() {
 	controls.SetBackgroundColor(tcell.ColorLightGray)
 	controls.SetTextColor(tcell.ColorBlack)
@@ -66,6 +97,7 @@ func setupApp() {
 	inputLabel.SetTextColor(tcell.ColorGreen)
 	searchQuery.SetAutocompleteFunc(autocomplete)
 	searchQuery.SetFieldWidth(0)
+	searchQuery.SetDoneFunc(func(_ tcell.Key) { selectMedium() })
 
 	ratedMediaSection.SetBorder(true)
 	ratedMediaSection.SetTitle("Rated Media")
@@ -84,6 +116,18 @@ func setupApp() {
 	content.SetDirection(tview.FlexRow)
 	content.AddItem(mainSections, 0, 1, true)
 	content.AddItem(controls, 1, 0, false)
+
+	ratingModal.SetBorder(true)
+	ratingModal.SetTitle(" Rate given Medium ")
+	ratingModal.SetDirection(tview.FlexRow)
+	ratingModal.AddItem(modalPrompt, 0, 2, false)
+	ratingModal.AddItem(modalForm, 0, 1, true)
+
+	modalPrompt.SetTextAlign(tview.AlignCenter)
+	modalPrompt.SetBorderPadding(1, 1, 1, 1)
+
+	layers.AddPage(contentLabel, content, true, true)
+	layers.AddPage(modalLabel, modal(ratingModal, 80, 20), true, false)
 }
 
 func autocomplete(currText string) []string {
@@ -93,6 +137,99 @@ func autocomplete(currText string) []string {
 		ret = append(ret, match.Str)
 	}
 	return ret
+}
+
+func submitRating() {
+	addRating()
+	showContent()
+}
+
+// checks that currText is a float an within [0; 100]
+func checkFloat(currText string, lastChar rune) bool {
+	if !tview.InputFieldFloat(currText, lastChar) {
+		return false
+	}
+	val, err := strconv.ParseFloat(currText, 64)
+	if err != nil {
+		return false
+	}
+
+	return val >= 0.0 && val <= 100.0
+}
+
+// checks if the selected medium exists.
+// if it does, the modal windows will be opened.
+// else we go back to the search query
+func selectMedium() {
+	val := searchQuery.GetText()
+	found := false
+
+	for _, candidate := range media {
+		if val == getAutocompleteVal(candidate) {
+			selected = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		app.SetFocus(searchQuery)
+		return
+	}
+
+	modalPrompt.Clear()
+	modalPrompt.SetText(val)
+
+	modalForm.AddInputField(" Score from 0 to 100 (decimals are allowed): ", "", 10, checkFloat, func(rating string) {
+		parsed, err := strconv.ParseFloat(rating, 32)
+		if err != nil {
+			return
+		}
+		currRating = parsed
+	})
+	modalForm.AddButton("Submit", submitRating)
+
+	layers.SwitchToPage(modalLabel)
+}
+
+// Go back to selectRating and ratingOverview view
+func showContent() {
+	app.SetFocus(searchQuery)
+
+	ratedMediaSection.Clear()
+	li := tview.NewList()
+	for _, userRating := range userRatings {
+		li.AddItem(userRating.MediaUrl, fmt.Sprintf("%f", userRating.Score), ' ', nil)
+	}
+
+	ratedMediaSection.AddItem(li, 0, 1, true)
+
+	layers.SwitchToPage(contentLabel)
+}
+
+// add new user rating or update existing one
+func addRating() {
+	outFile.WriteString("Add Rating\n")
+	defer func() {
+		searchQuery.SetText("")
+		modalPrompt.Clear()
+		modalForm.Clear(true)
+	}()
+
+	for i, candidate := range userRatings {
+		if selected.MediaUrl == candidate.MediaUrl {
+			userRatings[i].Score = float32(currRating)
+			outFile.WriteString(fmt.Sprintf("Found existing rating: %v", candidate))
+			return
+		}
+	}
+	outFile.WriteString("Create new rating")
+
+	userRatings = append(userRatings, utils.NumericReview{
+		MediaUrl: selected.MediaUrl,
+		Score:    float32(currRating),
+	})
+	outFile.WriteString("Created new rating")
+
 }
 
 func readUserRatings(ratingsFile string) {
@@ -116,12 +253,16 @@ func readCritics(criticsFile string) {
 	fmt.Printf("Read critics. Have %d critics now\n", len(critics))
 }
 
+func getAutocompleteVal(medium utils.Media) string {
+	return fmt.Sprintf("%s (%s)", medium.MediaTitle, medium.MediaUrl)
+}
+
 func readMedia(mediaFile string) {
 	fmt.Println("Reading media...")
 	media = append(media, utils.ReadStructs[utils.Media](mediaFile, false)...)
 	fmt.Printf("Read media. Have %d medias now\n", len(media))
-	for _, singleMedia := range media {
-		mediaNames = append(mediaNames, singleMedia.MediaTitle)
+	for _, medium := range media {
+		mediaNames = append(mediaNames, getAutocompleteVal(medium))
 	}
 }
 
