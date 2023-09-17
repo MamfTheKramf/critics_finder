@@ -47,6 +47,7 @@ var criticsRatings = make(map[string][]utils.NumericReview)
 // critic ratings are read in a separate routing -> we need an indicator that we're done before comparing
 var doneReadingcriticsRatings = make(chan bool, 1)
 var media []utils.Media
+var urlToMedia = make(map[string]utils.Media)
 var selected utils.Media
 var currRating = 0.0
 
@@ -165,6 +166,7 @@ func autocomplete(currText string) []string {
 	return ret
 }
 
+// adds rating to the user ratings and hides modal, giving back focus to the main sections
 func submitRating() {
 	addRating()
 	showContent()
@@ -181,6 +183,22 @@ func checkFloat(currText string, lastChar rune) bool {
 	}
 
 	return val >= 0.0 && val <= 100.0
+}
+
+func showModal(prompt string) {
+	modalPrompt.Clear()
+	modalPrompt.SetText(prompt)
+
+	modalForm.AddInputField(" Score from 0 to 100 (decimals are allowed): ", "", 10, checkFloat, func(rating string) {
+		parsed, err := strconv.ParseFloat(rating, 32)
+		if err != nil {
+			return
+		}
+		currRating = parsed
+	})
+	modalForm.AddButton("Submit", submitRating)
+
+	layers.SwitchToPage(modalLabel)
 }
 
 // checks if the selected medium exists.
@@ -202,26 +220,19 @@ func selectMedium() {
 		return
 	}
 
-	modalPrompt.Clear()
-	modalPrompt.SetText(val)
-
-	modalForm.AddInputField(" Score from 0 to 100 (decimals are allowed): ", "", 10, checkFloat, func(rating string) {
-		parsed, err := strconv.ParseFloat(rating, 32)
-		if err != nil {
-			return
-		}
-		currRating = parsed
-	})
-	modalForm.AddButton("Submit", submitRating)
-
-	layers.SwitchToPage(modalLabel)
+	showModal(val)
 }
 
 func showUserRatings() {
 	ratedMediaSection.Clear()
 	li := tview.NewList()
 	for _, userRating := range userRatings {
-		li.AddItem(userRating.MediaUrl, fmt.Sprintf("    Score: %.2f", userRating.Score), ' ', nil)
+		mainText := userRating.MediaUrl
+		medium, prs := urlToMedia[userRating.MediaUrl]
+		if prs {
+			mainText = medium.MediaTitle
+		}
+		li.AddItem(mainText, fmt.Sprintf("    Score: %.2f", userRating.Score), ' ', nil)
 	}
 
 	li.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -233,6 +244,11 @@ func showUserRatings() {
 				showUserRatings()
 				app.SetFocus(selectedSection)
 			}
+		}
+		if event.Key() == tcell.KeyEnter {
+			idx := li.GetCurrentItem()
+			selected = urlToMedia[userRatings[idx].MediaUrl]
+			showModal(getAutocompleteVal(selected))
 		}
 		return event
 	})
@@ -305,6 +321,7 @@ func readMedia(mediaFile string) {
 	fmt.Printf("Read media. Have %d medias now\n", len(media))
 	for _, medium := range media {
 		mediaNames = append(mediaNames, getAutocompleteVal(medium))
+		urlToMedia[medium.MediaUrl] = medium
 	}
 }
 
