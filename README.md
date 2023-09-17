@@ -1,6 +1,6 @@
 # Critics Finder
 
-Find critics on (Rotten Tomatoes)[https://www.rottentomatoes.com/] that have the same taste as you.
+Find critics on [Rotten Tomatoes](https://www.rottentomatoes.com/) that have the same taste as you.
 
 ## Build
 
