@@ -58,3 +58,34 @@ Ratings that couldn't be parsed at all or were I wasn't sure how to handle them,
 - high +3 out of -4..+4 (whoever wrote this, rated all of their reviews like that)
 - Recommended
 - ...
+
+### Fill in your own ratings
+
+To start the main part of the application, run
+```Bash
+bin/critics_finder tui
+```
+
+It will start a user interface where you can add your own movie ratings.
+
+Use `Shift + <Arrows>` to switch between the two windows.
+
+On the right window: Search for a title and hit `ENTER` once it is selected (you need the exact string as in the autocomplete suggestions in the field for it to work). Then you can score the movie with a score between `0` (bad) and `100` (good).
+
+On the left window: You can look through your ratings. You can change them by selecting a movie and hitting `ENTER`. Or you can remove them by hitting `BACKSPACE`.
+
+Once you're done, hit `Alt + ENTER`. A new window will open showing the critics sorted by how close they rate movies like you. The lower their score, the better.
+
+## About `fallback.zip`
+
+In case the API changes and the application can't process the responses, I attached `fallback.zip`.
+It contains the files written by 
+```Bash
+bin/critics_finder fetch critics
+bin/critics_finder fetch all-reviews -w 32
+```
+from Sep. 17th 2023.
+
+If the `fecth` commands don't work, simply extract the archive and put the contents into a directory called `tmp` inside the repository root.
+
+The other steps (starting with the normalization) should work then.
