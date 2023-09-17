@@ -39,7 +39,7 @@ var critics []utils.Critic
 var criticsRatings = make(map[string][]utils.NumericReview)
 
 // critic ratings are read in a separate routing -> we need an indicator that we're done before comparing
-var doneReadingcriticsRatings = false
+var doneReadingcriticsRatings = make(chan bool, 1)
 var media []utils.Media
 var selected utils.Media
 var currRating = 0.0
@@ -64,9 +64,15 @@ func StartTui(args []string) {
 
 	setup(*userRatingsFile, *criticsFile, *inDir, *mediaFile)
 
+	defer writeUserRatings(*userRatingsFile)
+
 	if err := app.SetRoot(layers, true).EnableMouse(true).SetFocus(searchQuery).Run(); err != nil {
 		panic(err)
 	}
+}
+
+func writeUserRatings(outFile string) {
+	utils.WriteStructs[utils.NumericReview](userRatings, outFile, false)
 }
 
 func setup(userRatingsFile, criticsFile, criticsRatingDir, mediaFile string) {
@@ -204,8 +210,7 @@ func selectMedium() {
 	layers.SwitchToPage(modalLabel)
 }
 
-// Go back to selectRating and ratingOverview view
-func showContent() {
+func showUserRatings() {
 	ratedMediaSection.Clear()
 	li := tview.NewList()
 	for _, userRating := range userRatings {
@@ -213,7 +218,11 @@ func showContent() {
 	}
 
 	ratedMediaSection.AddItem(li, 0, 1, true)
+}
 
+// Go back to selectRating and ratingOverview view
+func showContent() {
+	showUserRatings()
 	layers.SwitchToPage(contentLabel)
 	app.SetFocus(selectedSection)
 }
@@ -257,6 +266,7 @@ func readUserRatings(ratingsFile string) {
 	userRatings = append(userRatings, readRatings...)
 
 	fmt.Printf("Read user ratings. Have %d ratings now\n", len(userRatings))
+	showUserRatings()
 }
 
 func readCritics(criticsFile string) {
@@ -292,5 +302,5 @@ func readCriticsRatings(ratingsDir string) {
 
 		criticsRatings[criticUrl] = reviews
 	}
-	doneReadingcriticsRatings = true
+	doneReadingcriticsRatings <- true
 }
