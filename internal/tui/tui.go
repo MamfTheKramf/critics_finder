@@ -16,6 +16,12 @@ import (
 
 const contentLabel = "content"
 const modalLabel = "model"
+const instructions = `Use the input field to find media to rate.
+After one is selected, press [ENTER] to open a window to enter the rating.
+
+Already rated media is shown on the left.
+Select one of them and press [ENTER] to update it (alternatively you can search it again on the right and input a new rating).
+Pressing [BACKSPACE] will remove the rating from the list.`
 
 var app = tview.NewApplication()
 
@@ -107,15 +113,16 @@ func setupApp() {
 	searchQuery.SetDoneFunc(func(_ tcell.Key) { selectMedium() })
 
 	ratedMediaSection.SetBorder(true)
-	ratedMediaSection.SetTitle("Rated Media")
+	ratedMediaSection.SetTitle(" Rated Media ")
 	ratedMediaSection.SetTitleAlign(tview.AlignLeft)
 	selectMediaSection.SetDirection(tview.FlexRow)
 	selectMediaSection.SetBorderPadding(0, 0, 1, 1)
 	selectMediaSection.SetBorder(true)
-	selectMediaSection.SetTitle("Select Media To Rate")
+	selectMediaSection.SetTitle(" Select Media To Rate ")
 	selectMediaSection.SetTitleAlign(tview.AlignLeft)
 	selectMediaSection.AddItem(inputLabel, 1, 0, false)
-	selectMediaSection.AddItem(searchQuery, 0, 1, true)
+	selectMediaSection.AddItem(searchQuery, 0, 3, true)
+	selectMediaSection.AddItem(tview.NewTextView().SetText(instructions), 0, 1, false)
 
 	mainSections.AddItem(ratedMediaSection, 0, 1, true)
 	mainSections.AddItem(selectMediaSection, 0, 1, false)
@@ -216,6 +223,19 @@ func showUserRatings() {
 	for _, userRating := range userRatings {
 		li.AddItem(userRating.MediaUrl, fmt.Sprintf("    Score: %.2f", userRating.Score), ' ', nil)
 	}
+
+	li.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyDEL || event.Key() == tcell.KeyBackspace {
+			idx := uint(li.GetCurrentItem())
+			pruned, err := utils.Remove[utils.NumericReview](userRatings, idx)
+			if err == nil {
+				userRatings = pruned
+				showUserRatings()
+				app.SetFocus(selectedSection)
+			}
+		}
+		return event
+	})
 
 	ratedMediaSection.AddItem(li, 0, 1, true)
 }

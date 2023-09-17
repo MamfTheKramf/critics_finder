@@ -23,6 +23,26 @@ func Min(a, b int) int {
 	return b
 }
 
+// Retuns a new slice containing the elements of arr exept for the one with the given index
+func Remove[T any](arr []T, idx uint) ([]T, error) {
+	intIdx := int(idx)
+	if intIdx >= len(arr) {
+		return nil, fmt.Errorf("index out of range! Slice has len %d, biut got %d", len(arr), idx)
+	}
+
+	if intIdx == len(arr)-1 {
+		return arr[:idx], nil
+	}
+
+	var ret []T
+	for i, val := range arr {
+		if i != intIdx {
+			ret = append(ret, val)
+		}
+	}
+	return ret, nil
+}
+
 type Critic struct {
 	Name string
 	Url  string
