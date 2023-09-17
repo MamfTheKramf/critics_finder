@@ -193,8 +193,6 @@ func selectMedium() {
 
 // Go back to selectRating and ratingOverview view
 func showContent() {
-	app.SetFocus(searchQuery)
-
 	ratedMediaSection.Clear()
 	li := tview.NewList()
 	for _, userRating := range userRatings {
@@ -204,6 +202,7 @@ func showContent() {
 	ratedMediaSection.AddItem(li, 0, 1, true)
 
 	layers.SwitchToPage(contentLabel)
+	app.SetFocus(selectMediaSection)
 }
 
 // add new user rating or update existing one
