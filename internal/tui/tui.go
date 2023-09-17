@@ -7,6 +7,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MamfTheKramf/critics_finder/internal/utils"
 	"github.com/gdamore/tcell/v2"
@@ -15,7 +16,9 @@ import (
 )
 
 const contentLabel = "content"
-const modalLabel = "model"
+const ratingModalLabel = "ratingModal"
+const evalModalLabel = "evalModal"
+const controlsText = "(Shift + ArrowKey) focus different window; (Ctrl + c) exit"
 const instructions = `Use the input field to find media to rate.
 After one is selected, press [ENTER] to open a window to enter the rating.
 
@@ -32,6 +35,8 @@ var ratingModal = tview.NewFlex()
 var modalPrompt = tview.NewTextView()
 var modalForm = tview.NewForm()
 
+var evalModal = tview.NewFlex()
+
 var content = tview.NewFlex()
 var mainSections = tview.NewFlex()
 var ratedMediaSection = tview.NewFlex()
@@ -40,12 +45,15 @@ var selectedSection = selectMediaSection // reference to selection that is curre
 var searchQuery = tview.NewInputField()
 var controls = tview.NewTextView()
 
+// var controls = tview.NewFlex()
+
 var userRatings []utils.NumericReview
 var critics []utils.Critic
 var criticsRatings = make(map[string][]utils.NumericReview)
 
 // critic ratings are read in a separate routing -> we need an indicator that we're done before comparing
 var doneReadingcriticsRatings = make(chan bool, 1)
+var criticRatingsAlreadyRead = false
 var media []utils.Media
 var urlToMedia = make(map[string]utils.Media)
 var selected utils.Media
@@ -54,18 +62,14 @@ var currRating = 0.0
 // list of media names used for fuzzy finding
 var mediaNames []string
 
-var outFile *os.File
+var workers = 1
 
 func StartTui(args []string) {
-	file, err := os.Create("./tmp/deineMudda.txt")
-	if err != nil {
-		panic(err)
-	}
-	outFile = file
 	userRatingsFile := flag.String("u", utils.DefaultUserRatingsFile, "Path to the user ratings file (if non-existing it will be created)")
 	criticsFile := flag.String("c", utils.DefaultCriticsFile, "Path to crtics file")
 	inDir := flag.String("i", utils.DefaultNormalizedDir, "Path to directory containing normalized reviews")
 	mediaFile := flag.String("m", utils.DefaultMediaFile, "Path to media file")
+	flag.IntVar(&workers, "w", 1, "Number of workers used for evaluation")
 	os.Args = append(os.Args[:1], args...)
 	flag.Parse()
 
@@ -102,10 +106,17 @@ func modal(p tview.Primitive, width, height int) tview.Primitive {
 		AddItem(nil, 0, 1, false)
 }
 
+func setControls(ctrls *tview.TextView, text string, color, bgColor tcell.Color) {
+	// controlsView := tview.NewTextView()
+	ctrls.Clear()
+	ctrls.SetBackgroundColor(bgColor)
+	ctrls.SetTextColor(color)
+	ctrls.SetText(text)
+	// return controlsView
+}
+
 func setupApp() {
-	controls.SetBackgroundColor(tcell.ColorLightGray)
-	controls.SetTextColor(tcell.ColorBlack)
-	controls.SetText("(Shift + ArrowKey) focus different window; (Ctrl + c) exit")
+	setControls(controls, controlsText, tcell.ColorBlack, tcell.ColorLightGray)
 
 	inputLabel := tview.NewTextView().SetText("Media Title:")
 	inputLabel.SetTextColor(tcell.ColorGreen)
@@ -137,6 +148,9 @@ func setupApp() {
 			}
 			app.SetFocus(selectedSection)
 		}
+		if event.Key() == tcell.KeyEnter && event.Modifiers()&tcell.ModAlt != 0 {
+			go showEvalModal()
+		}
 		return event
 	})
 
@@ -153,8 +167,12 @@ func setupApp() {
 	modalPrompt.SetTextAlign(tview.AlignCenter)
 	modalPrompt.SetBorderPadding(1, 1, 1, 1)
 
+	evalModal.SetBorder(true)
+	evalModal.SetTitle(" Critics Evaluation ([ESC] to go back) ")
+
 	layers.AddPage(contentLabel, content, true, true)
-	layers.AddPage(modalLabel, modal(ratingModal, 80, 20), true, false)
+	layers.AddPage(ratingModalLabel, modal(ratingModal, 80, 20), true, false)
+	layers.AddPage(evalModalLabel, modal(evalModal, 120, 30), true, false)
 }
 
 func autocomplete(currText string) []string {
@@ -164,6 +182,82 @@ func autocomplete(currText string) []string {
 		ret = append(ret, match.Str)
 	}
 	return ret
+}
+
+var spinnerFrames = []string{
+	"( ●    )",
+	"(  ●   )",
+	"(   ●  )",
+	"(    ● )",
+	"(     ●)",
+	"(    ● )",
+	"(   ●  )",
+	"(  ●   )",
+	"( ●    )",
+	"(●     )",
+}
+
+func spin(evaluationDone *bool, textView *tview.TextView) {
+	i := 0
+	for !*evaluationDone {
+		textView.Clear()
+		textView.Write([]byte(spinnerFrames[i%len(spinnerFrames)]))
+		app.Draw()
+		i++
+		time.Sleep(time.Duration(100) * time.Millisecond)
+	}
+	app.Draw()
+}
+
+// Displays evaluation modal and starts evaluation process
+func showEvalModal() {
+	evalModal.Clear()
+	header := tview.NewTextView()
+	header.SetBorderPadding(1, 1, 0, 0)
+	header.SetTextAlign(tview.AlignCenter)
+	header.SetText("Wait to read critics reviews")
+	evalModal.AddItem(header, 0, 1, false)
+	spinner := tview.NewTextView()
+	spinner.SetTextAlign(tview.AlignCenter)
+	evalModal.AddItem(spinner, 0, 1, false)
+	evalDone := false
+	go spin(&evalDone, spinner)
+
+	layers.SwitchToPage(evalModalLabel)
+
+	if !criticRatingsAlreadyRead {
+		<-doneReadingcriticsRatings
+		criticRatingsAlreadyRead = true
+	}
+	header.Clear()
+	header.Write([]byte("Start Evaluation"))
+	app.Draw()
+	scoredCritics := evaluate(userRatings, criticsRatings, critics, workers)
+	evalDone = true
+
+	li := tview.NewList()
+	li.SetMouseCapture(nil)
+
+	const mainTemplate = "%04d: %s"
+	const urlTemplate = `    Score: %.2f
+    URL: https://www.rottentomatoes.com/critics/%s/movies`
+	for idx, critic := range scoredCritics {
+		mainTxt := fmt.Sprintf(mainTemplate, idx, critic.Critic.Name)
+		url := fmt.Sprintf(urlTemplate, critic.Score*100., critic.Critic.Url)
+		li.AddItem(mainTxt, url, ' ', nil)
+	}
+
+	evalModal.Clear()
+	evalModal.AddItem(li, 0, 1, true)
+
+	evalModal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEscape {
+			showContent()
+		}
+		return event
+	})
+
+	app.SetFocus(evalModal)
 }
 
 // adds rating to the user ratings and hides modal, giving back focus to the main sections
@@ -185,7 +279,7 @@ func checkFloat(currText string, lastChar rune) bool {
 	return val >= 0.0 && val <= 100.0
 }
 
-func showModal(prompt string) {
+func showRatingModal(prompt string) {
 	modalPrompt.Clear()
 	modalPrompt.SetText(prompt)
 
@@ -198,7 +292,7 @@ func showModal(prompt string) {
 	})
 	modalForm.AddButton("Submit", submitRating)
 
-	layers.SwitchToPage(modalLabel)
+	layers.SwitchToPage(ratingModalLabel)
 }
 
 // checks if the selected medium exists.
@@ -220,7 +314,7 @@ func selectMedium() {
 		return
 	}
 
-	showModal(val)
+	showRatingModal(val)
 }
 
 func showUserRatings() {
@@ -232,7 +326,7 @@ func showUserRatings() {
 		if prs {
 			mainText = medium.MediaTitle
 		}
-		li.AddItem(mainText, fmt.Sprintf("    Score: %.2f", userRating.Score), ' ', nil)
+		li.AddItem(mainText, fmt.Sprintf("    Score: %.2f", userRating.Score*100.0), ' ', nil)
 	}
 
 	li.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -245,10 +339,10 @@ func showUserRatings() {
 				app.SetFocus(selectedSection)
 			}
 		}
-		if event.Key() == tcell.KeyEnter {
+		if event.Key() == tcell.KeyEnter && event.Modifiers() == 0 {
 			idx := li.GetCurrentItem()
 			selected = urlToMedia[userRatings[idx].MediaUrl]
-			showModal(getAutocompleteVal(selected))
+			showRatingModal(getAutocompleteVal(selected))
 		}
 		return event
 	})
@@ -265,27 +359,25 @@ func showContent() {
 
 // add new user rating or update existing one
 func addRating() {
-	outFile.WriteString("Add Rating\n")
 	defer func() {
 		searchQuery.SetText("")
 		modalPrompt.Clear()
 		modalForm.Clear(true)
 	}()
 
+	rating := float32(currRating) / 100.0
+
 	for i, candidate := range userRatings {
 		if selected.MediaUrl == candidate.MediaUrl {
-			userRatings[i].Score = float32(currRating)
-			outFile.WriteString(fmt.Sprintf("Found existing rating: %v", candidate))
+			userRatings[i].Score = rating
 			return
 		}
 	}
-	outFile.WriteString("Create new rating")
 
 	userRatings = append(userRatings, utils.NumericReview{
 		MediaUrl: selected.MediaUrl,
-		Score:    float32(currRating),
+		Score:    rating,
 	})
-	outFile.WriteString("Created new rating")
 
 }
 
@@ -340,4 +432,5 @@ func readCriticsRatings(ratingsDir string) {
 		criticsRatings[criticUrl] = reviews
 	}
 	doneReadingcriticsRatings <- true
+	criticRatingsAlreadyRead = true
 }
