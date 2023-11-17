@@ -6,7 +6,7 @@ Find critics on [Rotten Tomatoes](https://www.rottentomatoes.com/) that have the
 
 To build the project, run the following command:
 ```Bash
-go build -o bin/ ./cmd/main.go
+go build -o bin/ ./cmd/critics_finder
 ```
 
 ## Usage
